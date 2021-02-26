@@ -1,0 +1,579 @@
+#!/bin/bash
+
+# Author: Beniamin Condrea (benjamin.condrea@gmail.com)
+
+# trap signals
+trap 'rm -f "tmp_data_file$$"; rm -f "tmp_mtx_file$$"; echo "trap card!"; exit 1' INT HUP TERM
+
+#matrix OPERATION [ARGUMENT]...
+
+# Operations:
+    # dims - Reuturns the dimensions of the matrix
+    # transpose - Transposes the matrix
+    # mean - returns the mean of the matrix as a 1xN matrix
+    # add - adds two matrices together, they must be the same size
+    # multiply - Multiplies two matrices together
+
+#Arguments:
+    # input matrix, whitespace delimited (space, tab, etc), with at least 1 value.
+
+#Examples:
+    # matrix dims [MATRIX]
+    # matrix transpose [MATRIX]
+    # matrix mean [MATRIX]
+    # matrix add MATRIX_LEFT MATRIX_RIGHT
+    # matrix multiply MATRIX_LEFT MATRIX_RIGHT
+
+#Features:
+    # Checks if operation and arguments are valid
+    # Checks if file exists and is readable
+    # Checks if matrix has at least 1 value
+    # Checks if it's a proper matrix
+    # Checks if it contains only integers
+
+
+# check if the arguments are valid
+if [ "$1" != "dims" ] && [ "$1" != "transpose" ] && [ "$1" != "mean" ] && [ "$1" != "add" ] && [ "$1" != "multiply" ]
+then
+    echo "Invalid command" 1>&2
+    exit 1
+fi
+# check if arguments require piping and one file
+if [ "$1" == "dims" ] || [ "$1" == "transpose" ] || [ "$1" == "mean" ]
+then
+    # send error if more than 2 arguments
+    if [ $# -gt "2" ]
+    then
+        echo "Invalid arguments" 1>&2
+        exit 1
+    fi
+    # create a temporary file for the function
+    tmp_data_file_path="tmp_data_file$$"
+    # if no file input, pipe in data to temp
+    if [ "$#" = "1" ]
+    then
+        #WAITS FOR INPUT
+        cat > "$tmp_data_file_path"
+    # if there is a file
+    elif [ "$#" = "2" ]
+    then
+        # send error if file doesn't exist
+        if [ ! -f "$2" ]
+        then
+            echo "File does not exist" 1>&2
+            exit 1
+        # send error if file is not readable
+        elif [ ! -r "$2" ]
+        then
+            echo "File is not readable" 1>&2
+            exit 1
+        fi
+        # send in file data into temp file, essentially copying
+        cat "$2" > "$tmp_data_file_path"
+    fi
+else
+    if [ "$#" -ne "3" ]
+    then
+        echo "Invalid arguments" 1>&2
+        exit 1
+    fi
+    #check if file exists
+    if [ ! -f "$2" ] || [ ! -f "$3" ]
+    then
+        echo "Files do not exist. Requires two files" 1>&2
+        exit 1
+    fi
+fi
+
+
+
+dims() {
+
+    #read the wc contents
+    read lines words characters filename <<< "$(wc "$tmp_data_file_path")"
+
+    # matrix needs at least 1 element
+    if [ "$words" == "0" ]
+    then
+        echo "Invalid input matrix. Requires at least one data point" 1>&2
+        exit 1
+    elif [ "$lines" == "0" ]
+    then
+        echo "Input number is zero. No lines found or matrix does not end in newline" 1>&2
+        exit 1
+    elif [ $((words % lines)) != "0" ]
+    then
+        echo "Not a proper matrix! Every row and every column must have equal dimensions 1!" 1>&2
+        exit 1
+    fi
+    col=$((words / lines))
+
+    # check if data has anything other than numbers
+    index=0
+    while read -a line
+    do
+        #check if any of the lines have more or less than the dimensions
+
+        # read the line, line is an array!
+        for ((count=0; count < ${#line[@]}; count++))
+        do
+            #check if the col is not equal to the data in the line
+            if [ "${#line[@]}" != "$col" ]
+            then
+                echo "Not a proper matrix! Every row and every column must have equal dimensions 2!" 1>&2
+                exit 1
+            #check if array has non-integers
+            elif ! [[ "${line[$count]}" =~ ^-?[0-9]+$ ]]
+            then
+                echo "Array contains a none-integer" 1>&2
+                exit 1
+            fi
+            # increment index
+            ((index++))
+        done
+    # send in the tmp data from pipe or file
+    done < $tmp_data_file_path
+
+    # row is number of lines
+    rows=$((lines))
+    # columns is number of words / lines
+    colums=$((words / lines)) 
+    # send out rows and columns
+    echo "$rows $colums"
+    # remove temp file
+    rm -f "$tmp_data_file_path"
+    exit 0
+}
+
+transpose() {
+
+    #read all the variables of file
+    read lines words characters filename <<< "$(wc $tmp_data_file_path)"
+
+    # matrix needs at least 1 element
+    if [ "$words" == "0" ]
+    then
+        echo "Invalid input matrix. Requires at least one data point" 1>&2
+        exit 1
+    elif [ "$lines" == "0" ]
+    then
+        echo "Input number is zero. No lines found or matrix does not end in newline" 1>&2
+        exit 1
+    elif [ $((words % lines)) != "0" ]
+    then
+        echo "Not a proper matrix! Every row and every column must have equal dimensions!" 1>&2
+        exit 1
+    fi
+    col=$((words / lines))
+    # declare an array to hold integers
+    declare -a array=( )
+    #create a 1d array from the read
+    index=0
+    # array  assign the words read to sequential indices of the array variable ARRAY, starting at zero
+    while read -a line
+    do
+        # read the line, line is an array!
+        for ((count=0; count < ${#line[@]}; count++))
+        do
+            #check if the col is not equal to the data in the line
+            if [ "${#line[@]}" != "$col" ]
+            then
+                echo "Not a proper matrix! Every row and every column must have equal dimensions!" 1>&2
+                exit 1
+            #check if array has non-integers
+            elif ! [[ "${line[$count]}" =~ ^-?[0-9]+$ ]]
+            then
+                echo "Array contains a none-integer" 1>&2
+                exit 1
+            fi
+            #assign index from line array
+            array[$index]="${line[$count]}"
+            # increment index
+            ((index++))
+        done
+    # send in the tmp data from pipe or file
+    done < $tmp_data_file_path
+    # temporary matrix file
+    > tmp_mtx_file$$
+    # get last index range to not tab (right side)
+    last_idx_range=$((words - col))
+    #last_row_idx=$((col - 1)) REDACTED
+    
+    # iterate each row
+    for ((row = 0; row < col; row++ )) # each row has column length
+    do
+        # echo "outer before"
+        # iterate over all data points, increment by width to transpose
+        for (( idx = row; idx < words; idx += col))
+        do
+            # echo "inner before"
+            # if the index is the last index
+            if test $idx -ge $last_idx_range
+            then
+                # send in just the array value
+                printf "%s" "${array[$idx]}" >> tmp_mtx_file$$
+            else
+                # send in the array value with delimiter
+                printf "%s\t" "${array[$idx]}" >> tmp_mtx_file$$
+            fi
+            # echo "inner after"
+        done
+        # echo "outer after"
+        # if test $row -ne $last_row_idx
+        # then
+            # new line for each row
+            printf "\n" >> tmp_mtx_file$$
+        # fi
+        # echo -e "\n"
+    done
+    # send out the matrix from tmp file
+    cat tmp_mtx_file$$
+    #remove tmp input data
+    rm -f "$tmp_data_file_path"
+
+    rm -f ./tmp_mtx_file$$
+    exit 0
+}
+
+mean() {
+
+    #read all the variables of file
+    read lines words characters filename <<< "$(wc $tmp_data_file_path)"
+
+    # matrix needs at least 1 element
+    if [ "$words" == "0" ]
+    then
+        echo "Invalid input matrix. Requires at least one data point" 1>&2
+        exit 1
+    elif [ "$lines" == "0" ]
+    then
+        echo "Input number is zero. No lines found or matrix does not end in newline" 1>&2
+        exit 1
+    elif [ $((words % lines)) != "0" ]
+    then
+        echo "Not a proper matrix! Every row and every column must have equal dimensions!" 1>&2
+        exit 1
+    fi
+    num_col=$((words / lines))
+    # declare an array to hold integers
+    declare -a array=( )
+    #create a 1d array from the read
+    index=0
+    # array  assign the words read to sequential indices of the array variable ARRAY, starting at zero
+    while read -a line
+    do
+        #check
+        # read the line, line is an array!
+        for ((count=0; count < ${#line[@]}; count++))
+        do
+            #check if the col is not equal to the data in the line
+            if [ "${#line[@]}" != "$num_col" ]
+            then
+                echo "Not a proper matrix! Every row and every column must have equal dimensions!" 1>&2
+                exit 1
+            #check if array has non-integers
+            elif ! [[ "${line[$count]}" =~ ^-?[0-9]+$ ]]
+            then
+                echo "Array contains a none-integer" 1>&2
+                exit 1
+            fi
+            #assign index from line array
+            array[$index]="${line[$count]}"
+            # increment index
+            ((index++))
+        done
+    # send in the tmp data from pipe or file
+    done < $tmp_data_file_path
+    # temporary matrix file
+    > tmp_mtx_file$$
+    #check our array
+    #echo ${array[@]}
+
+    # get the last column index for delimiter
+    last_col_idx=$((num_col - 1))
+
+    #iterate through row
+    for ((col_idx = 0; col_idx < num_col; col_idx++ )) # take all the columns and sum them up
+    do
+        # total data sum
+        total_num=0
+        # total data count
+        total_count=0
+
+        # iterate through the column (increase location by width each time)
+        for ((idx = col_idx; idx < words; idx += num_col))
+        do
+            # total sum of all data in the column
+            total_num=$((${array[$idx]} + total_num))
+            # total data count in the colum
+            total_count=$((total_count + 1))
+        done
+        # calculate the average of the column sum
+        total_num=$(((total_num + (total_count/2)*( (total_num>0)*2-1 )) / total_count))
+        # if we are on the last column do not tab
+        if [ $col_idx -lt $last_col_idx ]
+        then
+            # insert tab if not last column
+            printf "%s\t" $total_num >> tmp_mtx_file$$
+        else
+            # do not insert tab if last column
+            printf "%s" $total_num >> tmp_mtx_file$$
+        fi
+    done
+    # input new line after array is made
+    printf "\n" >> tmp_mtx_file$$
+    # send out the data
+    cat tmp_mtx_file$$
+    # remove the tmp matrix file
+    rm -f ./tmp_mtx_file$$
+    # remove the tmp input data file
+    rm -f "$tmp_data_file_path"
+    exit 0
+}
+
+add() {
+    #add them
+
+    # create two 1d arrays for each
+    declare -a array_A=( )
+    declare -a array_B=( )
+
+    # check if same dimensions
+    read lines_A words_A characters_A filename_A <<< $(wc "$1")
+    read lines_B words_B characters_B filename_B <<< $(wc "$2")
+    if [ "$lines_A" -ne "$lines_B" ] || [ "$words_A" -ne "$words_B" ]
+    then
+        echo "Matrices are not the same dimensions" 1>&2
+        exit 1
+    elif [ "$words_A" == "0" ] || [ "$words_B"  == "0" ]
+    then
+        echo "Invalid input matrix. Requires at least one datapoint" 1>&2
+        exit 1
+    elif [ "$lines_A" == "0" ] || [ "$lines_B" == "0" ]
+    then
+        echo "Input number is zero. No lines found or matrix does not end in newline" 1>&2
+        exit 1
+    elif [ $((words_A % lines_A)) != "0" ] ||  [ $((words_B % lines_B)) != "0" ]
+    then
+        echo "Not a proper matrix! Every row and every column must have equal dimensions!" 1>&2
+        exit 1
+    fi
+    # because they are the same dimensions, we only use 1 matrix
+    num_col=$((words_A / lines_A))
+    #create first 1 d array
+    index=0
+    while read -a line
+    do
+        for ((count=0; count < ${#line[@]}; count++))
+        do
+            #check if the col is not equal to the data in the line
+            if [ "${#line[@]}" != "$num_col" ]
+            then
+                echo "Not a proper matrix! Every row and every column must have equal dimensions!" 1>&2
+                exit 1
+            #check if array has non-integers
+            elif ! [[ "${line[$count]}" =~ ^-?[0-9]+$ ]]
+            then
+                echo "Array contains a none-integer" 1>&2
+                exit 1
+            fi
+            array_A[$index]="${line[$count]}"
+            ((index++))
+        done
+    done < "$1"
+
+    #create second 1d array
+    index=0
+    while read -a line
+    do
+        for ((count=0; count < ${#line[@]}; count++))
+        do
+            #check if the col is not equal to the data in the line
+            if [ "${#line[@]}" != "$num_col" ]
+            then
+                echo "Not a proper matrix! Every row and every column must have equal dimensions!" 1>&2
+                exit 1
+            #check if array has non-integers
+            elif ! [[ "${line[$count]}" =~ ^-?[0-9]+$ ]]
+            then
+                echo "Array contains a none-integer" 1>&2
+                exit 1
+            fi
+            array_B[$index]="${line[$count]}"
+            ((index++))
+        done
+    done < "$2"
+    #add them together
+    > tmp_mtx_file$$
+    # get last column index for delimiter
+    last_col_idx=$((num_col - 1))
+    #start with colums, then rows
+    for ((row=0; row < words_A; row += num_col))
+    do
+        # increase by width to remain on same column
+        for ((col_idx=0; col_idx < num_col; col_idx++))
+        do
+            #calculate the index
+            idx=$((row+col_idx))
+            # sum the two arrays
+            sum=$((${array_A[$idx]} + ${array_B[$idx]}))
+            # if not on the last column
+            if [ $col_idx -lt $last_col_idx ]
+            then
+                # add delimiter
+                printf "%s\t" $sum >> tmp_mtx_file$$
+            else
+                # do not add delimiter
+                printf "%s" $sum >> tmp_mtx_file$$
+            fi
+        done
+        printf "\n" >> tmp_mtx_file$$
+    done
+    # send out matrix data
+    cat tmp_mtx_file$$
+     # remove temporary files
+    rm -f ./tmp_mtx_file$$
+    exit 0
+}
+
+multiply() {
+    # create two matices
+    declare -a array_A=( )
+    declare -a array_B=( )
+    # check if we can multiple together
+    # get file data
+    read lines_A words_A characters_A filename_A <<< "$(wc "$1")"
+    read lines_B words_B characters_B filename_B <<< "$(wc "$2")"
+
+    if [ "$words_A" == "0" ] || [ "$words_B"  == "0" ]
+    then
+        echo "Invalid input matrix. Requires at least one datapoint" 1>&2
+        exit 1
+    elif [ "$lines_A" == "0" ] || [ "$lines_B" == "0" ]
+    then
+        echo "Input number is zero. No lines found or matrix does not end in newline" 1>&2
+        exit 1
+    elif [ $((words_A % lines_A)) != "0" ] ||  [ $((words_B % lines_B)) != "0" ]
+    then
+        echo "Not a proper matrix! Every row and every column must have equal dimensions!" 1>&2
+        exit 1
+    fi
+
+    col_A=$((words_A / lines_A))
+    col_B=$((words_B / lines_B))
+    row_A="$lines_A"
+    row_B="$lines_B"
+    # width of A must be equal to the height of B
+     if [ "$col_A" -ne "$row_B" ] 
+    then
+        echo "Matrices are not multipliable" 1>&2
+        exit 1
+    fi
+    #we should expect a row1 col2 matrix
+
+    #create a 1d array from the read
+    index=0
+    while read -a line
+    do
+        for ((count=0; count < ${#line[@]}; count++))
+        do
+            #check if the col is not equal to the data in the line
+            if [ "${#line[@]}" != "$col_A" ]
+            then
+                echo "Not a proper matrix! Every row and every column must have equal dimensions!" 1>&2
+                exit 1
+            #check if array has non-integers
+            elif ! [[ "${line[$count]}" =~ ^-?[0-9]+$ ]]
+            then
+                echo "Array contains a none-integer" 1>&2
+                exit 1
+            fi
+            array_A[$index]="${line[$count]}"
+            ((index++))
+        done
+    done < "$1"
+
+    #create a 1d array from the read
+    index=0
+    while read -a line
+    do
+        for ((count=0; count < ${#line[@]}; count++))
+        do
+            #check if the col is not equal to the data in the line
+            if [ "${#line[@]}" != "$col_B" ]
+            then
+                echo "Not a proper matrix! Every row and every column must have equal dimensions!" 1>&2
+                exit 1
+            #check if array has non-integers
+            elif ! [[ "${line[$count]}" =~ ^-?[0-9]+$ ]]
+            then
+                echo "Array contains a none-integer" 1>&2
+                exit 1
+            fi
+            array_B[$index]="${line[$count]}"
+            ((index++))
+        done
+    done < "$2"
+
+    #check arrays
+    #echo ${array_A[@]}
+    #echo ${array_B[@]}
+
+    #Get the dimensions of C
+    # row_C=$row_A
+    # col_C=$col_B
+
+    #echo $row_C
+    #echo $col_C
+
+    > tmp_mtx_file$$
+    last_idx_col_C=$((col_B - 1))
+    #start at index 0,0 (top left, and work down-right)
+    for ((row_C=0; row_C < row_A; row_C++))
+    do
+        for ((col_C=0; col_C < col_B; col_C++))
+        do
+            #echo "LOCATION: $row_C $col_C"
+            #iterate over the columns of A
+            total_iter_sum=0
+            #echo "$col_A"
+
+            # iterate through the columns of A AND row_C of B
+            # the matrix iteration is bounded by column A or row_C of B
+            for ((iter_idx=0; iter_idx<col_A; iter_idx++))
+            do
+                #calculate the location of A's and B's numbers
+                # ROW_A == ROW_C
+                # COL_A == ITERATION J
+                # ROW_B == ITERATION J
+                # COL_B == COL_C
+
+                index_A=$((row_C*col_A+iter_idx)) #find the index for A
+                index_B=$((iter_idx*col_B+col_C)) #find the index for B
+
+                # multiply the values at both locations in their array
+                iter_total=$((${array_A[$index_A]} * ${array_B[$index_B]}))
+                #echo "VALUE FOR $iter_idx iteration: $value_A x $value_B: $iter_total"
+                total_iter_sum=$((total_iter_sum + iter_total))
+            done
+            if [ $col_C -lt $last_idx_col_C ]
+            then
+                printf "%s\t" $total_iter_sum >> tmp_mtx_file$$
+            else
+                printf "%s" $total_iter_sum >> tmp_mtx_file$$
+            fi
+        done
+        printf "\n" >> tmp_mtx_file$$
+    done
+    # output data through tmp file
+    cat tmp_mtx_file$$
+    # remove temporary
+    rm -f ./tmp_mtx_file$$
+    exit 0
+}
+
+
+$1 "${@:2}" #calls the functions
+
+exit 0
+
